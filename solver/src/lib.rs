@@ -1,3 +1,4 @@
+pub mod certify;
 pub mod cli;
 pub mod data;
 pub mod feedback;

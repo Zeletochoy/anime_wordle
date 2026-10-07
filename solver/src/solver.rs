@@ -1,3 +1,4 @@
+use crate::certify::{Certificate, Entry};
 use crate::data::Character;
 use crate::feedback::{Feedback, Table, WIN};
 use crate::oracle::Game;
@@ -166,6 +167,23 @@ impl<'a> Solver<'a> {
         }
         self.memo.insert(key, best);
         best
+    }
+
+    /// Every cached state with its exact result, for [`crate::certify`] to check independently.
+    pub fn certificate(&self) -> Certificate {
+        let members = |b: &Bits| -> Vec<u16> { (0..512u16).filter(|&i| has(b, i)).collect() };
+        let entries = self
+            .memo
+            .iter()
+            .map(|((s, b), result)| {
+                let entry = match *result {
+                    Some((cost, guess)) => Entry::Finite { cost, guess },
+                    None => Entry::Infeasible,
+                };
+                ((members(s), members(b)), entry)
+            })
+            .collect();
+        Certificate { entries }
     }
 
     pub fn total_cost(&mut self, set: &[u16]) -> Option<u32> {
