@@ -37,6 +37,8 @@ npm run dev
 ```
 You would need a .env file with your own VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
 
+An optimal solver bot lives in [solver/](solver/README.md).
+
 
 ### Important changelog
 - 2026-07-29 Big DB update. Brown hair split into brown, dark brown and light brown.
