@@ -1,3 +1,4 @@
+use crate::certify;
 use crate::data::{Character, DEFAULT_CHARACTERS_URL};
 use crate::feedback::Table;
 use crate::history::{self, HistoryRule, PastPick};
@@ -35,6 +36,8 @@ pub enum Cmd {
     Bench(BenchArgs),
     /// Check past dailies against the footer's no-repeat windows
     HistoryCheck(HistoryCheckArgs),
+    /// Prove the strategy is optimal: an independent checker verifies the solver's results
+    Certify,
 }
 
 #[derive(Args)]
@@ -339,6 +342,41 @@ pub fn run_history_check(
     writeln!(
         out,
         "  (gaps can falsify the rule, not prove the picker enforces it)"
+    )?;
+    Ok(())
+}
+
+pub fn run_certify(db: &[Character], out: &mut impl Write) -> anyhow::Result<()> {
+    let table = Table::new(db);
+    let all = all(db);
+    let start = Instant::now();
+    let (total, cert) = {
+        let mut solver = Solver::new(&table, db, Probes::Free);
+        let total = solver
+            .total_cost(&all)
+            .context("no winning strategy for this DB")?;
+        // The solver (and its memo) is dropped here; only the exported certificate is kept.
+        (total, solver.certificate())
+    };
+    let search_time = start.elapsed();
+    let start = Instant::now();
+    let stats = certify::verify(&table, db, true, &cert, &all, total)?;
+    writeln!(
+        out,
+        "proved optimal: {total} total guesses over {} characters = {:.6} average",
+        db.len(),
+        total as f64 / db.len() as f64
+    )?;
+    writeln!(out, "  certificate entries: {}", cert.entries.len())?;
+    writeln!(
+        out,
+        "  checked: {} lower-bound states, {} upper-bound states, {} infeasible states, {} partitions",
+        stats.lower_states, stats.upper_states, stats.infeasible_states, stats.partitions
+    )?;
+    writeln!(
+        out,
+        "  search time: {search_time:.2?}, check time: {:.2?}",
+        start.elapsed()
     )?;
     Ok(())
 }

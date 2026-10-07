@@ -6,9 +6,9 @@ A bot that plays the [Anime Wordle](https://hewigkeyt.github.io/anime_wordle/) d
 
 - The feedback for every (guess, target) pair is a port of `buildResult` in `src/utils/gameLogic.js`. A test checks the port against the real JS for every pair in the character DB.
 - An exact branch-and-bound search finds the strategy with the lowest expected number of guesses, assuming every candidate is equally likely. With the current 488 characters:
-  - the expected number of guesses is 3.0246
+  - the expected number of guesses is 3.0246 (1476 guesses in total over all 488 targets), proven optimal by `certify` (see [Optimality](#optimality))
   - the opener is Kagome Higurashi
-  - the full search takes about 27 s and 250 MB
+  - the full search takes about 28 s and 240 MB
 - The bot only makes guesses the UI allows. Once a name has been guessed, the suggestions hide every character with that name (this matters for the two "Kagura"). The search also never makes a guess that could leave the real target impossible to enter.
 
 ## No cheating
@@ -26,7 +26,8 @@ export SUPABASE_ANON_KEY=...   # (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at 
 
 ./target/release/anime-wordle-solver play                    # play today's daily, print a JSON report
 ./target/release/anime-wordle-solver play --history-prior    # same, excluding recently picked characters/anime
-./target/release/anime-wordle-solver bench                   # offline: expected guesses, opener, histogram
+./target/release/anime-wordle-solver bench --characters ../src/data/characters.json    # offline: expected guesses, opener, histogram
+./target/release/anime-wordle-solver certify --characters ../src/data/characters.json  # offline: prove the strategy is optimal
 ./target/release/anime-wordle-solver bench --history-prior --since 2026-08-05   # replay past dailies, both modes
 ./target/release/anime-wordle-solver history-check --since 2026-08-05           # test the footer rule on past dailies
 ```
@@ -48,6 +49,33 @@ CRON_TZ=UTC
 ```
 
 Some cron implementations ignore `CRON_TZ`. In that case, use the server's local time for 00:05 UTC (09:05 JST).
+
+## Optimality
+
+`certify` proves that 1476 total guesses (3.024590 on average) is the minimum over all strategies that always win, given the rules below. With the current DB it reports `proved optimal: 1476 total guesses over 488 characters`. The search takes about 28 s, the check 17 s, and the peak memory is 240 MB.
+
+**Rules the proof covers.** A state is the set of remaining candidates S plus the names already guessed. A guess is allowed when:
+- its name hasn't been guessed (the UI hides it from the suggestions);
+- no other candidate shares its name. Breaking this can never be part of a strategy that always wins: on the branch where the namesake is the target, that name is blocked forever.
+
+Without the history prior, any other character, even one already ruled out, can be guessed to gather information. With the prior, the solver also never probes with a character that has a namesake, so a wrong prior can't make the target impossible to enter. Optimality then holds over that slightly smaller set of guesses. Relaxing this rule doesn't change the result: the total is 1476 either way.
+
+**How it's proven.**
+- The solver exports every state it solved, with its exact total (or "no strategy always wins").
+- An independent checker (`src/certify.rs`) re-derives the allowed guesses and feedback partitions with its own code. For the starting state it proves two things:
+  - **Lower bound:** every allowed first guess totals at least 1476. A part with more than one candidate needs at least 2|P| − 1 guesses (one guess wins at most one target). If that isn't enough, the checker proves the part's exported value recursively, the same way.
+  - **Upper bound:** the recorded guesses really total 1476 when played out.
+- Two facts make the recursion sound:
+  - A guess that gives no information is never optimal: it costs |S| and only blocks more names.
+  - Every other guess splits S into strictly smaller parts.
+- The checker's tests include forged certificates (a suboptimal strategy, inflated values, false "infeasible" tags, missing entries). The checker must reject all of them.
+
+**What the proof trusts.** The proof is checked by computer, not formally verified. It relies on:
+- the checker's own code;
+- the character DB;
+- the feedback table, a port of `buildResult` that a test compares against the JS for every pair. The checker also confirms that all-correct feedback happens only when the guess is the target.
+
+It also assumes uniform targets, no hints, and that you may turn off the "hide guessed anime" suggestion filter.
 
 ## The history prior (experimental)
 

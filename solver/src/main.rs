@@ -33,6 +33,7 @@ fn main() -> anyhow::Result<ExitCode> {
             };
             cli::run_bench(&db, supabase.as_ref(), today, &args, &mut out)?;
         }
+        Cmd::Certify => cli::run_certify(&db, &mut out)?,
         Cmd::HistoryCheck(args) => {
             cli::run_history_check(&db, &supabase()?, today, &args, &mut out)?
         }

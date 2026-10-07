@@ -1,4 +1,4 @@
-use anime_wordle_solver::cli::{Cli, Cmd, run_bench, run_history_check, run_play};
+use anime_wordle_solver::cli::{Cli, Cmd, run_bench, run_certify, run_history_check, run_play};
 use anime_wordle_solver::data::{self, Character};
 use anime_wordle_solver::supabase::Supabase;
 use chrono::NaiveDate;
@@ -259,4 +259,17 @@ fn history_check_flags_a_repeat_inside_the_window() {
         out.contains("anime: Some(10) → CONTRADICTS the 30-day window"),
         "{out}"
     );
+}
+
+#[test]
+fn certify_proves_the_small_db_optimum() {
+    assert!(matches!(
+        Cli::try_parse_from(["solver", "certify"]).unwrap().cmd,
+        Cmd::Certify
+    ));
+    let mut out = Vec::new();
+    run_certify(&small_db(), &mut out).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("proved optimal:"), "{out}");
+    assert!(out.contains("over 60 characters"), "{out}");
 }
