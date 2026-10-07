@@ -13,3 +13,7 @@ serde_json = "1"
 
 [dev-dependencies]
 mockito = "1"
+
+# The full-DB solver tests take ~30 s optimised and many minutes unoptimised.
+[profile.test]
+opt-level = 3

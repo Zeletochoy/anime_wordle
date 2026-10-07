@@ -531,4 +531,33 @@ mod tests {
         let table = Table::new(&pool);
         Solver::new(&table, &pool).total_cost(&[]);
     }
+
+    #[test]
+    fn full_db_kaguras_have_different_name_separators() {
+        let db = repo_db();
+        let table = Table::new(&db);
+        let a = db.iter().position(|c| c.name == "Kagura").unwrap();
+        let b = db.iter().rposition(|c| c.name == "Kagura").unwrap();
+        assert!(
+            (0..db.len()).any(|g| db[g].name != "Kagura" && table.get(g, a) != table.get(g, b))
+        );
+    }
+
+    /// Under uniform belief, the summed play lengths over all targets equal `total_cost` exactly.
+    #[test]
+    fn full_db_every_target_wins_and_mean_equals_expected_cost() {
+        let db = repo_db();
+        let table = Table::new(&db);
+        let mut solver = Solver::new(&table, &db);
+        let all: Set = (0..db.len() as u16).collect();
+        let total = solver.total_cost(&all).unwrap();
+        let mut played = 0u32;
+        for t in 0..db.len() {
+            let out = play(&mut solver, all.clone(), &mut Oracle::new(&table, t)).unwrap();
+            assert_eq!(*out.guesses.last().unwrap(), t);
+            assert!(!out.prior_violated);
+            played += out.guesses.len() as u32;
+        }
+        assert_eq!(played, total);
+    }
 }
