@@ -3,7 +3,11 @@
 //! Build first, then measure the binary alone (peak RSS in "maximum resident set size"):
 //! `cargo build --release --example feasibility && /usr/bin/time -l ./target/release/examples/feasibility`
 
-use anime_wordle_solver::{data, feedback::Table, solver::Solver};
+use anime_wordle_solver::{
+    data,
+    feedback::Table,
+    solver::{Probes, Solver},
+};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
@@ -13,7 +17,7 @@ fn main() -> anyhow::Result<()> {
     ))?;
     let table = Table::new(&db);
     let all: Vec<u16> = (0..db.len() as u16).collect();
-    let mut solver = Solver::new(&table, &db);
+    let mut solver = Solver::new(&table, &db, Probes::Free);
     let start = Instant::now();
     let total = solver
         .total_cost(&all)

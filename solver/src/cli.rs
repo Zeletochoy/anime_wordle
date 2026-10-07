@@ -2,7 +2,7 @@ use crate::data::{Character, DEFAULT_CHARACTERS_URL};
 use crate::feedback::Table;
 use crate::history::{self, HistoryRule, PastPick};
 use crate::oracle::Oracle;
-use crate::solver::{self, Set, Solver};
+use crate::solver::{self, Probes, Set, Solver};
 use crate::supabase::Supabase;
 use anyhow::Context;
 use chrono::NaiveDate;
@@ -146,7 +146,15 @@ pub fn run_play(
     args: &PlayArgs,
 ) -> anyhow::Result<PlayReport> {
     let table = Table::new(db);
-    let mut solver = Solver::new(&table, db);
+    let mut solver = Solver::new(
+        &table,
+        db,
+        if args.history_prior {
+            Probes::Safe
+        } else {
+            Probes::Free
+        },
+    );
     let support = if args.history_prior {
         history::support(
             db,
@@ -222,8 +230,8 @@ pub fn run_bench(
     out: &mut impl Write,
 ) -> anyhow::Result<()> {
     let table = Table::new(db);
-    // One solver for everything: its memo is keyed by (candidates, blocked names), independent of the prior.
-    let mut solver = Solver::new(&table, db);
+    // Memo is keyed by (candidates, blocked names), independent of the prior: one solver per probe mode.
+    let mut solver = Solver::new(&table, db, Probes::Free);
     let all = all(db);
     let start = Instant::now();
     let total = solver
@@ -270,6 +278,7 @@ pub fn run_bench(
         .iter()
         .filter(|(day, name)| *day >= args.since && !db.iter().any(|c| &c.name == name))
         .count();
+    let mut safe = Solver::new(&table, db, Probes::Safe);
     let (mut uniform, mut prior) = (Summary::default(), Summary::default());
     for pick in picks.iter().filter(|p| p.day >= args.since) {
         uniform.add(&solver::play(
@@ -280,7 +289,7 @@ pub fn run_bench(
         // `support` only looks at picks before `pick.day`.
         let support = history::support(db, &picks, pick.day, &args.rule.rule());
         prior.add(&solver::play(
-            &mut solver,
+            &mut safe,
             support,
             &mut Oracle::new(&table, pick.character),
         )?);

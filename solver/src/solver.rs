@@ -23,8 +23,18 @@ pub struct Stats {
     pub guesses_evaluated: u64,
 }
 
+/// Which probes (guesses outside the candidates) are allowed for characters that share a name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Probes {
+    /// A prior is in use, so a namesake outside the candidates may still be the target: never probe with it.
+    Safe,
+    /// No prior: the candidates are exactly the feedback-consistent characters, so namesakes outside them are ruled out.
+    Free,
+}
+
 pub struct Solver<'a> {
     table: &'a Table,
+    probes: Probes,
     /// Index of the first character with the same name: the name's id.
     name_id: Vec<u16>,
     /// Whether another character in the DB shares this character's name.
@@ -34,7 +44,7 @@ pub struct Solver<'a> {
 }
 
 impl<'a> Solver<'a> {
-    pub fn new(table: &'a Table, db: &[Character]) -> Self {
+    pub fn new(table: &'a Table, db: &[Character], probes: Probes) -> Self {
         assert_eq!(table.len(), db.len());
         let name_id: Vec<u16> = db
             .iter()
@@ -46,6 +56,7 @@ impl<'a> Solver<'a> {
             .collect();
         Self {
             table,
+            probes,
             name_id,
             has_namesake,
             memo: HashMap::new(),
@@ -61,18 +72,14 @@ impl<'a> Solver<'a> {
     }
 
     /// UI rule: the name wasn't guessed before. Strategy rules (a guessed name blocks its namesakes for good):
-    /// a candidate can't be guessed while a namesake is still a candidate, and a non-candidate probe can't have namesakes.
+    /// never guess while another candidate shares the name, and in `Safe` mode never probe with a name that has namesakes.
     fn allowed(&self, g: usize, set: &[u16], in_set: &Bits, blocked: &Bits) -> bool {
         let id = self.name_id[g];
-        if has(blocked, id) {
-            return false;
-        }
-        if has(in_set, g as u16) {
-            !set.iter()
+        !has(blocked, id)
+            && !set
+                .iter()
                 .any(|&t| t as usize != g && self.name_id[t as usize] == id)
-        } else {
-            !self.has_namesake[g]
-        }
+            && (self.probes == Probes::Free || has(in_set, g as u16) || !self.has_namesake[g])
     }
 
     /// Adds every character sharing a name with a member, so a wrong prior can never cause a name lockout.
@@ -189,6 +196,15 @@ fn consistent(table: &Table, history: &[(usize, Feedback)]) -> Set {
 
 pub fn play(solver: &mut Solver, support: Set, game: &mut impl Game) -> anyhow::Result<Outcome> {
     let table = solver.table;
+    anyhow::ensure!(
+        support.windows(2).all(|w| w[0] < w[1])
+            && support.iter().all(|&t| (t as usize) < table.len()),
+        "support must be sorted, unique and in range"
+    );
+    anyhow::ensure!(
+        solver.probes == Probes::Safe || support.len() == table.len(),
+        "Free probes need the full DB as support (a prior needs Probes::Safe)"
+    );
     let initial = bits(support.iter().copied());
     let mut history: Vec<(usize, Feedback)> = Vec::new();
     let mut prior_violated = support.is_empty();
@@ -268,7 +284,13 @@ mod tests {
     }
 
     /// Same recurrence and action rules, no pruning, no memo.
-    fn brute(db: &[Character], table: &Table, set: &[u16], blocked: &[String]) -> Option<u32> {
+    fn brute(
+        db: &[Character],
+        table: &Table,
+        set: &[u16],
+        blocked: &[String],
+        free: bool,
+    ) -> Option<u32> {
         if set.len() == 1 && !blocked.contains(&db[set[0] as usize].name) {
             return Some(1);
         }
@@ -276,11 +298,8 @@ mod tests {
             .filter(|&g| {
                 let namesake = |t: usize| t != g && db[t].name == db[g].name;
                 !blocked.contains(&db[g].name)
-                    && if set.contains(&(g as u16)) {
-                        !set.iter().any(|&t| namesake(t as usize))
-                    } else {
-                        !(0..db.len()).any(namesake)
-                    }
+                    && !set.iter().any(|&t| namesake(t as usize))
+                    && (free || set.contains(&(g as u16)) || !(0..db.len()).any(namesake))
             })
             .filter_map(|g| {
                 let mut parts: std::collections::BTreeMap<Feedback, Vec<u16>> = Default::default();
@@ -295,7 +314,7 @@ mod tests {
                 let mut sum = set.len() as u32;
                 for (f, p) in &parts {
                     if *f != WIN {
-                        sum += brute(db, table, p, &b)?;
+                        sum += brute(db, table, p, &b, free)?;
                     }
                 }
                 Some(sum)
@@ -321,8 +340,8 @@ mod tests {
                 s
             };
             assert_eq!(
-                Solver::new(&table, &pool).total_cost(&set),
-                brute(&pool, &table, &set, &[]),
+                Solver::new(&table, &pool, Probes::Safe).total_cost(&set),
+                brute(&pool, &table, &set, &[], false),
                 "seed {seed}"
             );
         }
@@ -347,12 +366,12 @@ mod tests {
                 .collect();
             set.sort();
             assert_eq!(
-                brute(&pool, &table, &set, &[]),
+                brute(&pool, &table, &set, &[], false),
                 Some(optimum),
                 "fixture drifted: pool={pool_size} seed={seed}"
             );
             assert_eq!(
-                Solver::new(&table, &pool).total_cost(&set),
+                Solver::new(&table, &pool, Probes::Safe).total_cost(&set),
                 Some(optimum),
                 "pool={pool_size} seed={seed}"
             );
@@ -385,8 +404,8 @@ mod tests {
             let table = Table::new(&pool);
             let set: Vec<u16> = (0..n as u16).collect();
             assert_eq!(
-                Solver::new(&table, &pool).total_cost(&set),
-                brute(&pool, &table, &set, &[]),
+                Solver::new(&table, &pool, Probes::Safe).total_cost(&set),
+                brute(&pool, &table, &set, &[], false),
                 "{anime}"
             );
         }
@@ -410,8 +429,8 @@ mod tests {
         let n = pool.len() as u16;
         let set: Vec<u16> = vec![0, 1, 2, n - 2, n - 1];
         assert_eq!(
-            Solver::new(&table, &pool).total_cost(&set),
-            brute(&pool, &table, &set, &[])
+            Solver::new(&table, &pool, Probes::Safe).total_cost(&set),
+            brute(&pool, &table, &set, &[], false)
         );
     }
 
@@ -435,7 +454,7 @@ mod tests {
     fn never_guesses_a_name_twice_and_wins_both_kaguras() {
         let pool = kagura_pool();
         let table = Table::new(&pool);
-        let mut solver = Solver::new(&table, &pool);
+        let mut solver = Solver::new(&table, &pool, Probes::Safe);
         let all: Set = (0..pool.len() as u16).collect();
         for t in [pool.len() - 2, pool.len() - 1] {
             let out = play(&mut solver, all.clone(), &mut Oracle::new(&table, t)).unwrap();
@@ -451,7 +470,10 @@ mod tests {
         let db = repo_db();
         let pool: Vec<Character> = db.iter().filter(|c| c.name == "Kagura").cloned().collect();
         let table = Table::new(&pool);
-        assert_eq!(Solver::new(&table, &pool).total_cost(&[0, 1]), None);
+        assert_eq!(
+            Solver::new(&table, &pool, Probes::Safe).total_cost(&[0, 1]),
+            None
+        );
     }
 
     #[test]
@@ -466,7 +488,7 @@ mod tests {
             (vec![0u16], real),
         ] {
             let out = play(
-                &mut Solver::new(&table, &pool),
+                &mut Solver::new(&table, &pool, Probes::Safe),
                 support,
                 &mut Oracle::new(&table, target),
             )
@@ -483,7 +505,7 @@ mod tests {
         let all: Set = (0..pool.len() as u16).collect();
         let run = |t| {
             play(
-                &mut Solver::new(&table, &pool),
+                &mut Solver::new(&table, &pool, Probes::Safe),
                 all.clone(),
                 &mut Oracle::new(&table, t),
             )
@@ -500,7 +522,7 @@ mod tests {
         let pool = kagura_pool();
         let table = Table::new(&pool);
         let out = play(
-            &mut Solver::new(&table, &pool),
+            &mut Solver::new(&table, &pool, Probes::Safe),
             vec![],
             &mut Oracle::new(&table, 5),
         )
@@ -513,7 +535,7 @@ mod tests {
     fn excluded_target_still_wins_and_reports_violation() {
         let pool = kagura_pool();
         let table = Table::new(&pool);
-        let mut solver = Solver::new(&table, &pool);
+        let mut solver = Solver::new(&table, &pool, Probes::Safe);
         for target in 0..pool.len() {
             let support: Set = (0..pool.len() as u16)
                 .filter(|&t| t as usize != target)
@@ -529,7 +551,7 @@ mod tests {
     fn empty_set_is_rejected() {
         let pool = kagura_pool();
         let table = Table::new(&pool);
-        Solver::new(&table, &pool).total_cost(&[]);
+        Solver::new(&table, &pool, Probes::Safe).total_cost(&[]);
     }
 
     #[test]
@@ -548,7 +570,7 @@ mod tests {
     fn full_db_every_target_wins_and_mean_equals_expected_cost() {
         let db = repo_db();
         let table = Table::new(&db);
-        let mut solver = Solver::new(&table, &db);
+        let mut solver = Solver::new(&table, &db, Probes::Safe);
         let all: Set = (0..db.len() as u16).collect();
         let total = solver.total_cost(&all).unwrap();
         let mut played = 0u32;
@@ -559,5 +581,108 @@ mod tests {
             played += out.guesses.len() as u32;
         }
         assert_eq!(played, total);
+    }
+
+    /// Characters identical except for name and age, so feedback depends only on name equality and age order.
+    fn synth(rows: &[(&str, i64)]) -> Vec<Character> {
+        let rows: Vec<String> = rows
+            .iter()
+            .map(|(name, age)| format!(r#"{{"name":"{name}","anime":{{"name":"X","year":2000,"studio":"S"}},"age":{age},"height":1,"hair_color":"R","sex":null,"seiyuu":"V"}}"#))
+            .collect();
+        parse(&format!("[{}]", rows.join(","))).unwrap()
+    }
+
+    #[test]
+    fn allowed_rules_for_namesakes() {
+        // 0 and 1 share the name K.
+        let db = synth(&[("K", 10), ("K", 30), ("X", 20), ("Y", 40), ("Z", 5)]);
+        let table = Table::new(&db);
+        for probes in [Probes::Safe, Probes::Free] {
+            let solver = Solver::new(&table, &db, probes);
+            let check = |g: usize, set: &[u16], blocked: Bits| {
+                solver.allowed(g, set, &bits(set.iter().copied()), &blocked)
+            };
+            // (a) probe whose twin is a candidate: forbidden in both modes.
+            assert!(!check(0, &[1, 2], [0; 8]), "{probes:?}");
+            // (b) candidate whose twin is not a candidate: allowed in both modes.
+            assert!(check(0, &[0, 2], [0; 8]), "{probes:?}");
+            // (c) both namesakes outside the candidates: only Free allows the probe.
+            assert_eq!(check(0, &[2, 3], [0; 8]), probes == Probes::Free);
+            assert!(check(2, &[2, 3], [0; 8]), "unique names are always allowed");
+            // (d) blocking is by name: the K name id is 0 whichever K was guessed.
+            assert!(!check(1, &[1, 2], bits([solver.name_id[1]])));
+            assert!(!check(0, &[0, 2], bits([solver.name_id[1]])));
+        }
+    }
+
+    #[test]
+    fn free_matches_brute_force_with_kagura_probes() {
+        let pool = kagura_pool();
+        let table = Table::new(&pool);
+        for seed in 0..20 {
+            let mut set: Vec<u16> = sample(40, 6, seed).into_iter().map(|i| i as u16).collect();
+            set.sort();
+            let free = Solver::new(&table, &pool, Probes::Free).total_cost(&set);
+            assert_eq!(free, brute(&pool, &table, &set, &[], true), "seed {seed}");
+            assert!(
+                free <= Solver::new(&table, &pool, Probes::Safe).total_cost(&set),
+                "seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn free_solver_rejects_partial_support_and_bad_supports() {
+        let pool = kagura_pool();
+        let table = Table::new(&pool);
+        assert!(
+            play(
+                &mut Solver::new(&table, &pool, Probes::Free),
+                vec![0, 1, 2],
+                &mut Oracle::new(&table, 1)
+            )
+            .is_err()
+        );
+        for probes in [Probes::Safe, Probes::Free] {
+            assert!(
+                play(
+                    &mut Solver::new(&table, &pool, probes),
+                    vec![2, 1],
+                    &mut Oracle::new(&table, 1)
+                )
+                .is_err()
+            );
+            assert!(
+                play(
+                    &mut Solver::new(&table, &pool, probes),
+                    vec![1, 999],
+                    &mut Oracle::new(&table, 1)
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn full_db_free_probes_are_consistent_and_no_worse() {
+        let db = repo_db();
+        let table = Table::new(&db);
+        let all: Set = (0..db.len() as u16).collect();
+        let mut free = Solver::new(&table, &db, Probes::Free);
+        let free_total = free.total_cost(&all).unwrap();
+        let safe_total = Solver::new(&table, &db, Probes::Safe)
+            .total_cost(&all)
+            .unwrap();
+        println!("full DB total: free {free_total}, safe {safe_total}");
+        assert!(free_total <= safe_total);
+        let played: u32 = (0..db.len())
+            .map(|t| {
+                play(&mut free, all.clone(), &mut Oracle::new(&table, t))
+                    .unwrap()
+                    .guesses
+                    .len() as u32
+            })
+            .sum();
+        assert_eq!(played, free_total);
     }
 }
