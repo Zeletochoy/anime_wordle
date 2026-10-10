@@ -39,16 +39,14 @@ export SUPABASE_ANON_KEY=...   # (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at 
 
 Submission is off by default: `--submit --username <name>`, where the name must contain "bot". The bot submits before printing the report. If submission fails, the report shows `submit_error` and the exit code is non-zero.
 
-### Cron
+### Daily run
 
-`play` needs the day's row to exist, so run it shortly after 00:00 UTC:
+`.github/workflows/solver.yml` runs every day at 00:30 UTC (09:30 JST). That's 30 minutes after the new daily appears, which leaves room for GitHub's scheduling delays. It runs `play --history-prior --submit --username botaku`.
 
-```
-CRON_TZ=UTC
-5 0 * * * cd /path/to/solver && ./target/release/anime-wordle-solver play --history-prior >> runs.jsonl
-```
-
-Some cron implementations ignore `CRON_TZ`. In that case, use the server's local time for 00:05 UTC (09:05 JST).
+- **Secrets:** it reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from repository secrets.
+- **Manual runs:** "Run workflow" in the Actions tab plays without submitting, unless you tick "Submit".
+- **Logs:** they include the full report, so the last guess is the day's answer.
+- **Other servers:** to run it elsewhere with cron, schedule `play` shortly after 00:00 UTC.
 
 ## Optimality
 

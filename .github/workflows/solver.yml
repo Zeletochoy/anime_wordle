@@ -1,0 +1,43 @@
+name: Daily solver
+
+on:
+  schedule:
+    # 00:30 UTC = 09:30 JST, 30 min after the daily changes (00:00 UTC), leaving room for scheduling delays.
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: Submit the score to the leaderboard
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-solver
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: solver
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: solver
+      - run: cargo build --release --locked
+      - name: Play today's daily
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Scheduled runs always submit; manual runs only when asked.
+          SUBMIT: ${{ github.event_name == 'schedule' || inputs.submit }}
+        run: |
+          args=(play --history-prior)
+          if [ "$SUBMIT" = "true" ]; then args+=(--submit --username botaku); fi
+          ./target/release/anime-wordle-solver "${args[@]}"
