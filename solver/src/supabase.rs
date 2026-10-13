@@ -77,6 +77,21 @@ impl Supabase {
         }
     }
 
+    /// Whether `username` already has a score for `day`, the same query as the site's `hasPlayedToday`.
+    pub fn has_score(&self, day: NaiveDate, username: &str) -> anyhow::Result<bool> {
+        let rows: Vec<serde_json::Value> = self
+            .request(reqwest::Method::GET, "daily_scores")
+            .query(&[
+                ("select", "id".to_owned()),
+                ("day", format!("eq.{day}")),
+                ("username", format!("eq.{}", username.trim())),
+            ])
+            .send()?
+            .error_for_status()?
+            .json()?;
+        Ok(!rows.is_empty())
+    }
+
     pub fn submit_score(
         &self,
         today: NaiveDate,
@@ -194,6 +209,32 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn has_score_queries_day_and_username() {
+        let mut server = mockito::Server::new();
+        let query = |name: &str| {
+            Matcher::AllOf(vec![
+                Matcher::UrlEncoded("select".into(), "id".into()),
+                Matcher::UrlEncoded("day".into(), "eq.2026-10-13".into()),
+                Matcher::UrlEncoded("username".into(), format!("eq.{name}")),
+            ])
+        };
+        server
+            .mock("GET", "/rest/v1/daily_scores")
+            .match_query(query("botaku"))
+            .match_header("apikey", "k")
+            .with_body(r#"[{"id":7}]"#)
+            .create();
+        server
+            .mock("GET", "/rest/v1/daily_scores")
+            .match_query(query("newbot"))
+            .with_body("[]")
+            .create();
+        let supabase = Supabase::new(&server.url(), "k");
+        assert!(supabase.has_score(d("2026-10-13"), " botaku ").unwrap());
+        assert!(!supabase.has_score(d("2026-10-13"), "newbot").unwrap());
     }
 
     #[test]

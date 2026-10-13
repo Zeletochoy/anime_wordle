@@ -2,8 +2,10 @@ name: Daily solver
 
 on:
   schedule:
-    # 00:30 UTC = 09:30 JST, 30 min after the daily changes (00:00 UTC), leaving room for scheduling delays.
-    - cron: "30 0 * * *"
+    # 00:47 and 12:47 UTC = 09:47 and 21:47 JST. GitHub only runs schedules best-effort (runs were 6+ hours late,
+    # and can be dropped under load), so the second slot is a retry; `play --submit` skips if today's score exists.
+    # Odd minute to avoid the busy start of the hour.
+    - cron: "47 0,12 * * *"
   workflow_dispatch:
     inputs:
       submit:

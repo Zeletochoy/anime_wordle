@@ -41,7 +41,10 @@ Submission is off by default: `--submit --username <name>`, where the name must 
 
 ### Daily run
 
-`.github/workflows/solver.yml` runs every day at 00:30 UTC (09:30 JST). That's 30 minutes after the new daily appears, which leaves room for GitHub's scheduling delays. It runs `play --history-prior --submit --username botaku`.
+`.github/workflows/solver.yml` runs `play --history-prior --submit --username botaku` at 00:47 and 12:47 UTC (09:47 and 21:47 JST).
+
+- **Why two times:** GitHub runs scheduled workflows on a best-effort basis. Runs here have started more than 6 hours late, and GitHub may drop queued runs under load, so the second time is a retry.
+- **No double submission:** `--submit` first checks whether the username already has a score for today. If it does, the run sets `already_submitted` in the report and exits successfully without posting.
 
 - **Secrets:** it reads `SUPABASE_URL` and `SUPABASE_ANON_KEY` from repository secrets.
 - **Manual runs:** "Run workflow" in the Actions tab plays without submitting, unless you tick "Submit".

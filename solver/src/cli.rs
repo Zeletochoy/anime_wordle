@@ -117,6 +117,8 @@ pub struct PlayReport {
     pub history_prior: bool,
     pub prior_violated: bool,
     pub submitted: bool,
+    /// The bot already had a score for today (e.g. an earlier scheduled run), so nothing was posted.
+    pub already_submitted: bool,
     pub submit_error: Option<String>,
 }
 
@@ -174,12 +176,20 @@ pub fn run_play(
         &mut Oracle::daily(&table, db, supabase, today)?,
     )?;
     let count = outcome.guesses.len();
-    let (submitted, submit_error) = match (args.submit, &args.username) {
-        (true, Some(username)) => match supabase.submit_score(today, username, count) {
-            Ok(()) => (true, None),
-            Err(e) => (false, Some(format!("{e:#}"))),
+    let (submitted, already_submitted, submit_error) = match (args.submit, &args.username) {
+        (true, Some(username)) => match supabase.has_score(today, username) {
+            Ok(true) => (false, true, None),
+            Ok(false) => match supabase.submit_score(today, username, count) {
+                Ok(()) => (true, false, None),
+                Err(e) => (false, false, Some(format!("{e:#}"))),
+            },
+            Err(e) => (
+                false,
+                false,
+                Some(format!("checking for an existing score failed: {e:#}")),
+            ),
         },
-        _ => (false, None),
+        _ => (false, false, None),
     };
     Ok(PlayReport {
         day: today,
@@ -195,6 +205,7 @@ pub fn run_play(
         history_prior: args.history_prior,
         prior_violated: outcome.prior_violated,
         submitted,
+        already_submitted,
         submit_error,
     })
 }

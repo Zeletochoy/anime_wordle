@@ -35,6 +35,15 @@ fn server_with_today(name: &str) -> ServerGuard {
     server
 }
 
+/// The leaderboard has no score for the bot today.
+fn no_score_yet(server: &mut ServerGuard) {
+    server
+        .mock("GET", "/rest/v1/daily_scores")
+        .match_query(Matcher::Any)
+        .with_body("[]")
+        .create();
+}
+
 fn play_args(extra: &[&str]) -> anime_wordle_solver::cli::PlayArgs {
     let argv = [&["solver", "play"], extra].concat();
     match Cli::try_parse_from(argv).unwrap().cmd {
@@ -87,6 +96,7 @@ fn play_submits_once_with_the_guess_count() {
         &play_args(&[]),
     )
     .unwrap();
+    no_score_yet(&mut server);
     let post = server
         .mock("POST", "/rest/v1/daily_scores")
         .match_body(Matcher::Json(serde_json::json!({
@@ -104,6 +114,7 @@ fn play_submits_once_with_the_guess_count() {
 fn failed_submission_still_reports_the_game() {
     let db = small_db();
     let mut server = server_with_today("Monkey D. Luffy");
+    no_score_yet(&mut server);
     server
         .mock("POST", "/rest/v1/daily_scores")
         .with_status(500)
@@ -117,6 +128,58 @@ fn failed_submission_still_reports_the_game() {
     .unwrap();
     assert!(!report.submitted && report.submit_error.is_some());
     assert_eq!(report.guesses.last().unwrap().name, "Monkey D. Luffy");
+}
+
+#[test]
+fn already_submitted_today_skips_the_post_without_failing() {
+    let db = small_db();
+    let mut server = server_with_today("Monkey D. Luffy");
+    server
+        .mock("GET", "/rest/v1/daily_scores")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("day".into(), format!("eq.{TODAY}")),
+            Matcher::UrlEncoded("username".into(), "eq.botaku".into()),
+        ]))
+        .with_body(r#"[{"id":1}]"#)
+        .create();
+    let post = server
+        .mock("POST", "/rest/v1/daily_scores")
+        .expect(0)
+        .create();
+    let report = run_play(
+        &db,
+        &Supabase::new(&server.url(), "k"),
+        today(),
+        &play_args(&["--submit", "--username", "botaku"]),
+    )
+    .unwrap();
+    assert!(report.already_submitted && !report.submitted && report.submit_error.is_none());
+    assert_eq!(report.guesses.last().unwrap().name, "Monkey D. Luffy");
+    post.assert();
+}
+
+#[test]
+fn failed_score_check_is_reported_and_nothing_is_posted() {
+    let db = small_db();
+    let mut server = server_with_today("Monkey D. Luffy");
+    server
+        .mock("GET", "/rest/v1/daily_scores")
+        .match_query(Matcher::Any)
+        .with_status(500)
+        .create();
+    let post = server
+        .mock("POST", "/rest/v1/daily_scores")
+        .expect(0)
+        .create();
+    let report = run_play(
+        &db,
+        &Supabase::new(&server.url(), "k"),
+        today(),
+        &play_args(&["--submit", "--username", "botaku"]),
+    )
+    .unwrap();
+    assert!(!report.already_submitted && !report.submitted && report.submit_error.is_some());
+    post.assert();
 }
 
 #[test]
